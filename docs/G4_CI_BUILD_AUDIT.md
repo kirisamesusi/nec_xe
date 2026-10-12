@@ -1,5 +1,20 @@
 # G4-CI：WhateverXe macOS 原生编译配置审计
 
+EXP031原生诊断验证最新（2026-10-13）：第三次[run38285379089](https://github.com/kirisamesusi/nec_xe/actions/runs/38285379089) SUCCESS，CI commit`8d90d130c45b5d2ee3fc0d1b19c8e039a0947419`。固定EXP016诊断patch临时副本原生RELEASE构建、56typed默认CPU资格、格式/plist/符号/hash及input完整性全部PASS。原test.py出口0、54stem结果0，52无冲突项加四同名复核得到56完整入口；optional exact donor未运行。下面准备段落的“尚未运行”保留当时状态，以本段为最新结论。
+
+独立验收：GitHub artifact11762584452（878777字节）digest/SHA256 `afbfb12829aa10372d641f6cfa12d51a501fafe0ffc0e97eedcc377bbe1795af`，ZIP CRC/安全路径与86项SHA256SUMS/清单集合PASS。base181文件对应固定canonical源码，patched仅kern_xe.cpp预期hash变化，after-build一致；build-manifest实际编译source hashes逐项匹配patched-source和固定Lilu。
+
+本地另用Python标准库独立解析两个Mach-O的header/load-command/segment/section/symtab边界、lifecycle与禁止imports，均x86_64 MH_KEXT_BUNDLE/filetype11。WhateverXe实际包含`tglPanelADiagSerialize`定义和`WhateverXePanelADiagnostics`字符串；9份人工损坏binary副本均正确拒绝，没有执行产物。诊断ZIP八文件（二bundle四文件+三LICENSE+diagnostic-variant.json）与已验producer逐bytes一致。
+
+| EXP031诊断产物 | 字节数 / SHA256 |
+|---|---|
+| kexts-panel-a-diagnostic.zip | 339648；`54e64f3286237e7485743cc69d608c498a1a2557f59a8fd798341c3b7294c36f` |
+| WhateverXe0.2.3 binary | 1210240；`13729a3fc16a5416f2a235b50bed13f3293acdaf64e114ecdc3dc5dc1746aed0` |
+| AppleIntelTGLCompat0.5.0 binary | 17296；`a486b40a57c7a3515859e87b41de652b93e9c0062f265457ef384e40a5d89641` |
+
+实际环境仍macOS15.7.9/24G830、Xcode16.4/16F6、AppleClang17、SDK15.5、Python3.12.10、image20260824.0482.1；目标保持20G1443。原版workflow/pin/依赖/源guards不改，原版包保留，未宣称逐位可重现。签名/加载、真实kernel属性读取安全、NEC macOS内屏/加速/FL及C00～C07仍NOT_TESTED；G0恢复条件仍BLOCKED。该patch未实现PPS/VDD/背光；没有第四次运行或部署。
+
+
 2026-10-13 / EXP031诊断variant准备：已审阅固定EXP016 patch的公开范围，并准备独立手动`macos-diagnostic-build.yml`。基线pin/依赖/toolchain/RELEASE/身份与ABI guards不变，只在临时源码应用patch；原`macos-build.yml`仍构建原版。诊断原生BUILD/实际56资格尚未运行，本段不宣称PASS。
 
 固定diff SHA256 `f806150ef6200b8ae5739a07d31a8e5fae93ee7e2ede42d0d3bd73d8f5f17aec`（3468字节）。canonical181文件实际apply/reverse与原生成器比对PASS，仅`WhateverXe/kern_xe.cpp`增加60行；base hash `b87d62f064782ee8b7afecd34c287b19b85b93166bdfaf5a8d51577c51539b20`，patched hash `ba87bac89886ce078294b55ee58619c23f09d180307d6f73827fc2c09e4bcbaf`。分别保存base/patch/patched/build-input/after-build manifests，检查预期一文件增量与构建后完整性。16新增诊断CI边界测试和18既有回归PASS，均为人工输入/模拟构建门槛。
