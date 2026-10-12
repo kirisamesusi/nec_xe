@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "audited_on": "2026-10-12",
+  "target_os_build": "20G1443",
+  "toolchain": {
+    "runner": "macos-15-intel",
+    "xcode_version": "16.4",
+    "xcode_build": "16F6",
+    "macos_sdk": "15.5",
+    "python": "3.12.10"
+  },
+  "dependencies": {
+    "WhateverXe": {
+      "repository": "https://github.com/b00t0x/WhateverXe",
+      "revision": "61a449255d385aeb468f64e5d5042e126f387b90",
+      "url": "https://codeload.github.com/b00t0x/WhateverXe/zip/61a449255d385aeb468f64e5d5042e126f387b90",
+      "archive": "WhateverXe.zip",
+      "bytes": 606299,
+      "sha256": "c0103dafd8a54ebf7d6f6bb24c41594927f53497864c2e3c9f99086ac287b880",
+      "root": "WhateverXe-61a449255d385aeb468f64e5d5042e126f387b90"
+    },
+    "MacKernelSDK": {
+      "repository": "https://github.com/acidanthera/MacKernelSDK",
+      "revision": "05094e5e88cec7caedbfb35e8449ed0db94bf95b",
+      "url": "https://codeload.github.com/acidanthera/MacKernelSDK/zip/05094e5e88cec7caedbfb35e8449ed0db94bf95b",
+      "archive": "MacKernelSDK-upstream.zip",
+      "bytes": 4007848,
+      "sha256": "b6abad54ab347028d7c5495a105cdd59736bcecf12ab6bbb44df7041715994bd",
+      "root": "MacKernelSDK-05094e5e88cec7caedbfb35e8449ed0db94bf95b"
+    },
+    "Lilu": {
+      "repository": "https://github.com/acidanthera/Lilu",
+      "version": "1.7.0",
+      "revision": "f32ae0f11d10857f4b4c0f03440bca7c2e2a1793",
+      "url": "https://github.com/acidanthera/Lilu/releases/download/1.7.0/Lilu-1.7.0-DEBUG.zip",
+      "archive": "Lilu-1.7.0-DEBUG.zip",
+      "bytes": 378754,
+      "sha256": "2adf2425286aba87e9b50c6992724be057a89caa5884464b1adc00154c2fd012",
+      "root": "Lilu.kext",
+      "digest_evidence": "SHA-256 embedded in locked WhateverXe .github/workflows/ci.yml matched locally; Release API digest absent",
+      "license": {
+        "url": "https://raw.githubusercontent.com/acidanthera/Lilu/f32ae0f11d10857f4b4c0f03440bca7c2e2a1793/LICENSE.txt",
+        "archive": "Lilu-LICENSE.txt",
+        "bytes": 1483,
+        "sha256": "74c3ca48189b796b0d262866e67de8efba77a71516667ce68dc3a8f13c2a3c57"
+      }
+    }
+  },
+  "default_cpu_tests": 56,
+  "optional_exact_donor_replay": "NOT_TESTED; proprietary binaries excluded"
+}

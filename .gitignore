@@ -1,0 +1,69 @@
+# private evidence and machine identity
+/reports/
+/artifacts/
+# Investigation documents contain private paths and per-machine evidence.
+# Only the separately reviewed CI audit is eligible for public Git by default.
+/docs/*
+!/docs/G4_CI_BUILD_AUDIT.md
+# local source and generated binaries
+/third_party/
+build/
+/ci-work/
+/ci-output/
+*.kext
+*.dmg
+*.iso
+*.img
+*.efi
+*.bin
+*.edid
+*.aml
+*.log
+*.zip
+# Raw captures, system/boot configuration, private notes and credentials.
+private/
+secrets/
+credentials/
+.ssh/
+.gnupg/
+.aws/
+raw/
+captures/
+EFI/
+config.plist
+*.ioreg
+*.acpi
+*.dmp
+*.pcap
+*.pcapng
+*.vbt
+*.rom
+*.exe
+*.dll
+*.o
+*.a
+*.dSYM/
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+.env
+.env.*
+id_rsa*
+id_ed25519*
+*credentials*.json
+*secrets*.json
+*SMBIOS*.plist
+*serial-number*
+*recovery-key*
+*.private.*
+*.local.*
+*-Inventory.txt
+*inventory-raw*
+# OS tooling
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
