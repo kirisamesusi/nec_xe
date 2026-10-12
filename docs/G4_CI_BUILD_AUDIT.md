@@ -1,6 +1,17 @@
 # G4-CI：WhateverXe macOS 原生编译配置审计
 
-日期：2026-10-12（Asia/Shanghai）。状态：本地配置/依赖资格 PASS；首次 macOS BUILD 与原样上游 CPU runner NOT_TESTED，等待授权。当前没有成功编译的 kext。
+初始审计：2026-10-12；最新验证：2026-10-13（Asia/Shanghai）。状态：G4-CI原生编译、默认CPU资格和产物检查PASS。下文首次运行/修复候选段落保留当时事实，当前结果以此处第二次运行证据为准。
+
+第二次运行[38277643192](https://github.com/kirisamesusi/nec_xe/actions/runs/38277643192)，CI源码commit`0adf5b6301c56594416933c98960878a7ff92989`：环境、固定依赖、原样build.py、原样test.py出口、输入完整性、两个kext产物资格及打包全部PASS。原runner结果54个stem项全0；独立复核两组同名任务后得到56个语言限定默认入口全0（34C+++22Python，含source guards）。无exact donor replay/内核加载/NEC启动或内屏实测。
+
+本地对下载binary另用LLVM readobj/nm复核了x86_64/MH_KEXT_BUNDLE、load-command边界、生命周期符号和禁止imports；ZIP七文件（两bundle共四文件+三许可证）CRC/逐bytes比对PASS。GitHub artifact SHA256`a7c075951a3a8ab85c70ba21ab772e7903e423e8ff92fc6f9ed385a40429e5f1`匹配，81项pipeline文件hash全部通过。`kexts.zip` SHA256为`966bc72d54502430ec6d14facd724c14fa5ff5a72506a945399098f94b482154`。
+
+| 产物 | 版本 | 架构 | binary SHA-256 |
+|---|---|---|---|
+| WhateverXe.kext | 0.2.3 | x86_64 | `e2da78c58791bf6211c6bb61a596769fe496c3db6afd07139e212e2c12f49227` |
+| AppleIntelTGLCompat.kext | 0.5.0 | x86_64 | `34aabaead6c7bb5fb62b4e821fb71ddbea6e9184c6cf839bc8f6ab9b057787b4` |
+
+实际主机仍为Intel macOS15.7.9/24G830、Xcode16.4/16F6、AppleClang17.0.0、SDK15.5、Python3.12.10。驱动运行目标仍为20G1443。锁定输入/工具链与可重复操作流程已有实测，两个运行报告的binary hash不同，不宣称字节级可重复构建。首次FAIL日志保留，源/pin/EXP015016/核心采样不改；G0及内屏验收状态不提升。用户授权的两次运行均已结束，不自动第三次。
 
 2026-10-13更新：首次手动运行38275645396（配置commit87d47a3）整体FAIL；工具链/依赖资格与原生build.py编译链接PASS，但CPU结果54个命名项中1个source-guard PASS、53个因标准头文件发现失败，产物检查FAIL。首次实际二进制未留存，不能事后确认格式或可加载性。已准备本地CI修复，18人工测试PASS；修复尚未推送、未云端验证，也未启动第二次运行。原生BUILD从缺环境阻塞细化为“编译命令PASS / 产物验收未通过”。
 
