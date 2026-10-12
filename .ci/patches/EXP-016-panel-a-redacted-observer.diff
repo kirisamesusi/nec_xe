@@ -1,0 +1,76 @@
+--- a/WhateverXe/kern_xe.cpp
++++ b/WhateverXe/kern_xe.cpp
+@@ -2328,6 +2328,63 @@
+  auto data=OSData::withBytes(copy,size);IOFree(copy,size);
+  if(!data)return false;
+  const bool result=data->serialize(serializer);data->release();return result;
++}
++
++
++// NEC-XE draft: an on-demand, numeric-only view of existing DDI A records.
++// No new native hooks, MMIO/AUX IO, timestamps, or hot-path recording. Existing
++// quiet-training suppression and recorder limits still apply. Empty history
++// means no captured evidence, never panel success/failure. PPS/backlight are
++// not covered. The legacy raw properties remain private and are not sanitized.
++static bool tglPanelADiagSerialize(void *, void *, OSSerialize *serializer) {
++    if (!tglAUXLock) return false;
++    constexpr uint32_t words = 8, headerWords = 12;
++    constexpr size_t count = 256 + 128 + 64 + 1024 + 128;
++    constexpr size_t size = (headerWords + words * count) * sizeof(uint32_t);
++    auto copy = static_cast<uint32_t *>(IOMalloc(size));
++    if (!copy) return false;
++    memset(copy, 0, size);
++    copy[0] = 0x4E454331; // NEC1; all fields are little-endian uint32 on x86
++    copy[1] = 0; // physical DDI A, not framebuffer index or AGDC port id
++    copy[5] = words;
++    copy[6] = 256; copy[7] = 128; copy[8] = 64;
++    copy[9] = 1024; copy[10] = 128;
++    copy[11] = 1; // limited inherited coverage, no panel-power/backlight trace
++    auto out = copy + headerWords;
++    // Input records contain private thread/pointer/payload fields. Select only
++    // reviewed numeric metadata; never bulk-copy a legacy record or payload.
++    auto aux = [&](const TGLAUXRecord &record) {
++        const auto w = record.word;
++        if (w[0] && w[4] == 0 && w[1] <= 11 && w[27] == 0x4D454D31) {
++            out[0] = w[0]; out[1] = w[1]; out[2] = w[2]; out[3] = w[3];
++            out[4] = w[4]; out[5] = w[7]; out[6] = w[8]; out[7] = w[27];
++        }
++        out += words;
++    };
++    auto dpcd = [&](const TGLDPCDRecord &record) {
++        const auto w = record.word;
++        if (w[0] && w[12] == 0 && w[13] == 1 &&
++            (w[1] <= 0x220 || w[1] == 0x600)) {
++            out[0] = w[0]; out[1] = 32 + w[3]; out[2] = w[4]; out[3] = w[5];
++            out[4] = w[12]; out[5] = w[1]; out[6] = w[2]; out[7] = 1;
++        }
++        out += words;
++    };
++    IOSimpleLockLock(tglAUXLock);
++    copy[2] = tglAUXCounts[0]; copy[3] = tglAUXControlCounts[0];
++    copy[4] = tglDPCDCount; // global DPCD count, not A-only
++    for (const auto &r : tglAUXFirst[0]) aux(r);
++    for (const auto &r : tglAUXLast[0]) aux(r);
++    for (const auto &r : tglAUXControl[0]) aux(r);
++    for (const auto &r : tglDPCDFirst) dpcd(r);
++    for (const auto &r : tglDPCDLast) dpcd(r);
++    IOSimpleLockUnlock(tglAUXLock);
++    auto data = OSData::withBytes(copy, size);
++    IOFree(copy, size);
++    if (!data) return false;
++    const bool result = data->serialize(serializer);
++    data->release();
++    return result;
+ }
+ 
+ void tglAUXPublish() {
+@@ -9423,6 +9480,9 @@
+ }
+ 
+ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
++ if(auto live=OSSerializer::forTarget(nullptr,tglPanelADiagSerialize)) {
++  IORegistryEntry::getRegistryRoot()->setProperty("WhateverXePanelADiagnostics",live);live->release();
++ }
+  tglRecordStartOrder(3,that);
+  for(uintptr_t ddi=3;ddi<=8;++ddi) {
+   if(auto live=OSSerializer::forTarget(nullptr,tglAUXControlSerialize,reinterpret_cast<void *>(ddi))) {

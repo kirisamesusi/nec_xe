@@ -15,8 +15,16 @@ import sys
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
+import importlib.util
 
 HERE = Path(__file__).resolve().parent
+
+
+def diagnostic_module():
+    spec = importlib.util.spec_from_file_location('nec_diagnostic_patch', HERE/'diagnostic_patch.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def sha(path):
@@ -234,6 +242,9 @@ def package_kexts(build, output):
         for name in ('WhateverXe', 'MacKernelSDK', 'Lilu'):
             notice = output/'licenses'/(name+'-LICENSE.txt')
             z.write(notice, 'licenses/'+notice.name)
+        marker = output/'patch-manifest.json'
+        if marker.is_file():
+            z.write(marker, 'diagnostic-variant.json')
 
 
 def finalize(output, result, redactions):
@@ -261,6 +272,8 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--downloads', type=Path, help='existing pinned archives; no network')
     parser.add_argument('--prepare-only', action='store_true')
+    parser.add_argument('--diagnostic-patch', action='store_true',
+                        help='fixed EXP016 variant; apply only to fresh verified source')
     args = parser.parse_args(argv)
     work, output = args.work.resolve(), args.output.resolve()
     if work == output or work in output.parents or output in work.parents:
@@ -276,6 +289,9 @@ def main(argv=None):
               'NEC_boot': 'NOT_TESTED', 'NEC_internal_panel': 'NOT_TESTED',
               'acceleration': 'NOT_TESTED', 'ci_commit': os.environ.get('GITHUB_SHA', 'LOCAL'),
               'run_id': os.environ.get('GITHUB_RUN_ID', 'LOCAL')}
+    if args.diagnostic_patch:
+        result['variant'] = 'exp016-panel-a-diagnostic'
+        result['patch_integration'] = 'NOT_TESTED'
     redactions = [(str(work), '/ci-work'), (str(output), '/ci-output'),
                   (str(HERE.parent), '/nec-xe-ci'), (str(Path.home()), '/ci-home')]
     try:
@@ -305,6 +321,16 @@ def main(argv=None):
             os.environ['PATH'] = compiler_dir + os.pathsep + os.environ['PATH']
         roots, before = prepare(lock, work, output, args.downloads)
         result['prepare'] = 'PASS'
+        expected_inputs = {name: dict(files) for name, files in before.items()}
+        if args.diagnostic_patch:
+            diagnostic = diagnostic_module()
+            patched, patch_record = diagnostic.apply_fixed(
+                roots['WhateverXe'], before['WhateverXe'],
+                lock['dependencies']['WhateverXe']['revision'], output, work/'reverse-check')
+            expected_inputs['WhateverXe'] = patched
+            result['patch_integration'] = 'PASS'
+            result['patch'] = patch_record
+            write_json(output/'build-input-manifests.json', expected_inputs)
         if args.prepare_only:
             result['status'] = 'PREPARE_PASS_BUILD_NOT_TESTED'
         else:
@@ -336,8 +362,12 @@ def main(argv=None):
                 else:
                     os.environ['SDKROOT'] = original_sdkroot
             for name, root in roots.items():
-                if any(not (root/p).is_file() or sha(root/p) != h for p, h in before[name].items()):
+                if any(not (root/p).is_file() or sha(root/p) != h for p, h in expected_inputs[name].items()):
                     raise ValueError('dependency/source modified by build or tests')
+            if args.diagnostic_patch:
+                diagnostic.verify_source_after_build(source, expected_inputs['WhateverXe'])
+                write_json(output/'after-build-source-manifest.json',
+                           {n: h for n, h in diagnostic.manifest(source).items() if not n.startswith('build/')})
             result['input_integrity'] = 'PASS'
             if rc_build == 0:
                 result['artifact_validation'] = 'FAIL'
@@ -345,6 +375,8 @@ def main(argv=None):
                 result['artifact_validation'] = 'PASS'
             if result['build'] == 'PASS' and result['tests'] == 'PASS':
                 package_kexts(build, output)
+                if args.diagnostic_patch:
+                    (output/'kexts.zip').rename(output/'kexts-panel-a-diagnostic.zip')
                 result['status'] = 'PASS'
     except Exception as exc:
         result['error'] = str(exc)
@@ -352,6 +384,28 @@ def main(argv=None):
             result['error'] = result['error'].replace(raw, replacement)
         print(result['error'], file=sys.stderr)
     finally:
+        if args.diagnostic_patch and result['patch_integration'] == 'PASS':
+            # Preserve integrity evidence even if compiler/CPU/inspection raised.
+            try:
+                for name, root in roots.items():
+                    if any(not (root/p).is_file() or sha(root/p) != h
+                           for p, h in expected_inputs[name].items()):
+                        raise ValueError('dependency/source modified by build or tests')
+                diagnostic.verify_source_after_build(roots['WhateverXe'], expected_inputs['WhateverXe'])
+                result['input_integrity'] = 'PASS'
+                write_json(output/'after-build-source-manifest.json',
+                           {n: h for n, h in diagnostic.manifest(roots['WhateverXe']).items()
+                            if not n.startswith('build/')})
+            except Exception as exc:
+                result['status'] = 'FAIL'
+                result['input_integrity'] = 'FAIL'
+                result['integrity_error'] = str(exc)
+                for raw, replacement in redactions:
+                    result['integrity_error'] = result['integrity_error'].replace(raw, replacement)
+                # A package created before a late integrity failure is quarantined.
+                bundle = output/'kexts-panel-a-diagnostic.zip'
+                if bundle.exists():
+                    bundle.rename(output/'UNVERIFIED-panel-a-diagnostic.zip')
         finalize(output, result, redactions)
     print(json.dumps({k: result[k] for k in ('status', 'prepare', 'build', 'tests')}))
     return 0 if result['status'] in ('PASS', 'PREPARE_PASS_BUILD_NOT_TESTED') else 1

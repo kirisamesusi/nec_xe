@@ -1,5 +1,14 @@
 # G4-CI：WhateverXe macOS 原生编译配置审计
 
+2026-10-13 / EXP031诊断variant准备：已审阅固定EXP016 patch的公开范围，并准备独立手动`macos-diagnostic-build.yml`。基线pin/依赖/toolchain/RELEASE/身份与ABI guards不变，只在临时源码应用patch；原`macos-build.yml`仍构建原版。诊断原生BUILD/实际56资格尚未运行，本段不宣称PASS。
+
+固定diff SHA256 `f806150ef6200b8ae5739a07d31a8e5fae93ee7e2ede42d0d3bd73d8f5f17aec`（3468字节）。canonical181文件实际apply/reverse与原生成器比对PASS，仅`WhateverXe/kern_xe.cpp`增加60行；base hash `b87d62f064782ee8b7afecd34c287b19b85b93166bdfaf5a8d51577c51539b20`，patched hash `ba87bac89886ce078294b55ee58619c23f09d180307d6f73827fc2c09e4bcbaf`。分别保存base/patch/patched/build-input/after-build manifests，检查预期一文件增量与构建后完整性。16新增诊断CI边界测试和18既有回归PASS，均为人工输入/模拟构建门槛。
+
+该属性仅导出现有DDI A软件历史的有限AUX/DPCD数字元数据，固定51248字节，无payload/EDID内容/时间戳/线程/指针，无PPS/VDD/背光实现。真实kernel读取安全、签名/加载、NEC物理内屏与FL均NOT_TESTED。公开输入只有固定diff与源码LICENSE/CI配置，不包含私有采样或Apple文件。默认56typed调度、四同名复核和guards保留。
+
+未来诊断artifact名含`panel-a-diagnostic`，成功ZIP为`kexts-panel-a-diagnostic.zip`，内置`diagnostic-variant.json`和三份许可证；原版ZIP不改。第三次诊断运行已获授权；这不包含任何NEC系统写入或部署。后续实际结果另行记录，失败保留证据。
+
+
 初始审计：2026-10-12；最新验证：2026-10-13（Asia/Shanghai）。状态：G4-CI原生编译、默认CPU资格和产物检查PASS。下文首次运行/修复候选段落保留当时事实，当前结果以此处第二次运行证据为准。
 
 第二次运行[38277643192](https://github.com/kirisamesusi/nec_xe/actions/runs/38277643192)，CI源码commit`0adf5b6301c56594416933c98960878a7ff92989`：环境、固定依赖、原样build.py、原样test.py出口、输入完整性、两个kext产物资格及打包全部PASS。原runner结果54个stem项全0；独立复核两组同名任务后得到56个语言限定默认入口全0（34C+++22Python，含source guards）。无exact donor replay/内核加载/NEC启动或内屏实测。
