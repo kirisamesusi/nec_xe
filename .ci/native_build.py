@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pinned native CI build; --prepare-only is an offline integrity audit, not BUILD."""
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -8,6 +9,7 @@ import platform
 import plistlib
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import urllib.request
@@ -116,7 +118,71 @@ def capture(command, cwd, output, name):
     return result.returncode
 
 
-def inspect_kexts(build):
+def macho_kext_header(exe):
+    with exe.open('rb') as f:
+        raw = f.read(32)
+    if len(raw) != 32:
+        raise ValueError('truncated Mach-O header')
+    magic, cpu, subtype, filetype, ncmds, size, flags, reserved = struct.unpack('<8I', raw)
+    if magic != 0xFEEDFACF or cpu != 0x01000007 or filetype != 0xB:
+        raise ValueError('expected thin x86_64 MH_KEXT_BUNDLE numeric header')
+    return {'magic': magic, 'cputype': cpu, 'cpusubtype': subtype, 'filetype': filetype,
+            'ncmds': ncmds, 'sizeofcmds': size, 'flags': flags, 'reserved': reserved}
+
+
+def expected_cpu_jobs(source):
+    # Read the pinned runner's literal list without executing its module.
+    tree = ast.parse((source/'tools/test.py').read_text(encoding='utf-8'))
+    names = next(ast.literal_eval(node.value) for node in tree.body
+                 if isinstance(node, ast.Assign)
+                 and any(isinstance(t, ast.Name) and t.id == 'python_tests' for t in node.targets))
+    if not isinstance(names, list) or any(not isinstance(n, str) or not n.isidentifier() for n in names):
+        raise ValueError('unexpected upstream Python test list')
+    cpp = [p.stem for p in sorted((source/'tests').glob('*.cpp')) if not p.stem.endswith('_fixture')]
+    jobs = [('cpp', n) for n in cpp] + [('python', n) for n in names]
+    if len(set(jobs)) != len(jobs):
+        raise ValueError('duplicate test identity within one language')
+    return jobs
+
+
+def qualify_cpu_results(source, output, runner_rc, expected_count):
+    jobs = expected_cpu_jobs(source)
+    matrix = json.loads((source/'build/tests/results.json').read_text())
+    stems = {n for kind, n in jobs}
+    if (len(jobs) != expected_count or set(matrix) != stems
+            or any(type(v) is not int for v in matrix.values())):
+        raise ValueError('upstream default test matrix incomplete')
+    collisions = {n for n in stems if sum(stem == n for kind, stem in jobs) > 1}
+    qualified = {kind+':'+n: matrix[n] for kind, n in jobs if n not in collisions}
+    if collisions:
+        logs = output/'duplicate-checks'
+        binaries = source/'build/ci-qualified-tests'
+        logs.mkdir(); binaries.mkdir()
+        for kind, n in jobs:
+            if n not in collisions:
+                continue
+            log = kind+'_'+n+'.log'
+            if kind == 'cpp':
+                exe = binaries/n
+                cmd = ['clang++', '-std=c++17', '-O1', '-g', '-fsanitize=address,undefined',
+                       '-fno-omit-frame-pointer', '-I'+str(source/'WhateverXe'),
+                       str(source/'tests'/(n+'.cpp')), '-o', str(exe)]
+                rc = capture(cmd, source, logs, log)
+                if rc == 0:
+                    rc = capture([str(exe)], source, logs, kind+'_'+n+'-execute.log')
+            else:
+                rc = capture([sys.executable, str(source/'tests'/(n+'.py'))], source, logs, log)
+            qualified[kind+':'+n] = rc
+    status = 'PASS' if runner_rc == 0 and len(qualified) == expected_count and all(v == 0 for v in qualified.values()) else 'FAIL'
+    report = {'status': status, 'original_runner_exit': runner_rc, 'scheduled_jobs': len(jobs),
+              'original_json_items': len(matrix), 'colliding_names': sorted(collisions),
+              'independent_duplicate_rechecks': len(collisions)*2,
+              'results': qualified, 'exact_donor': 'NOT_TESTED'}
+    write_json(output/'cpu-qualified-results.json', report)
+    return report
+
+
+def inspect_kexts(build, output=None):
     products = {}
     for name in ('WhateverXe', 'AppleIntelTGLCompat'):
         bundle = build / (name + '.kext') / 'Contents'
@@ -125,17 +191,38 @@ def inspect_kexts(build):
             info = plistlib.load(f)
         arch = subprocess.check_output(['xcrun', 'lipo', '-archs', str(exe)], text=True).strip()
         header = subprocess.check_output(['xcrun', 'otool', '-hv', str(exe)], text=True)
-        if arch != 'x86_64' or 'KEXT_BUNDLE' not in header:
-            raise ValueError('expected x86_64 MH_KEXT_BUNDLE: ' + name)
+        # Apple otool prints KEXTBUNDLE; validate numeric fields, not display text.
+        if output is not None:
+            (output/(name+'-inspection.log')).write_text(arch+'\n'+header, encoding='utf-8')
+        numeric = macho_kext_header(exe)
+        if arch != 'x86_64':
+            raise ValueError('expected x86_64 lipo architecture: ' + name)
         if info['CFBundleIdentifier'] != 'org.b00t0x.' + name or info['CFBundleExecutable'] != name:
             raise ValueError('unexpected bundle metadata')
-        products[name] = {'sha256': sha(exe), 'architecture': arch, 'mach_header': header,
+        products[name] = {'sha256': sha(exe), 'architecture': arch, 'mach_header': header, 'numeric_header': numeric,
                           'identifier': info['CFBundleIdentifier'], 'version': info['CFBundleVersion']}
     manifest = json.loads((build/'build-manifest.json').read_text())
     for name, product in products.items():
         if manifest[name]['sha256'] != product['sha256'] or manifest[name]['configuration'] != 'RELEASE':
             raise ValueError('upstream build manifest mismatch')
     return products
+
+
+def preserve_build_diagnostics(build, output):
+    stage = output/'build-diagnostics'
+    stage.mkdir()
+    (stage/'README.txt').write_text(
+        'UNVERIFIED compiled outputs retained for diagnosis.\n'
+        'Compiler exit success does not establish CPU, format or runtime acceptance.\n'
+        'See result.json, CPU results and inspection logs before considering any use.\n',
+        encoding='utf-8')
+    for name in ('WhateverXe', 'AppleIntelTGLCompat'):
+        for rel in ('Contents/Info.plist', 'Contents/MacOS/'+name):
+            src = build/(name+'.kext')/rel
+            dest = stage/(name+'.kext')/rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest)
+    shutil.copyfile(build/'build-manifest.json', output/'build-manifest.json')
 
 
 def package_kexts(build, output):
@@ -205,11 +292,14 @@ def main(argv=None):
                    'python': platform.python_version(), 'Xcode': text(['xcodebuild', '-version']),
                    'clang': text(['xcrun', 'clang++', '--version']),
                    'ld': text(['xcrun', 'ld', '-v']), 'SDK': text(['xcrun', '--sdk', 'macosx', '--show-sdk-version']),
+                   'CPU_SDKROOT': text(['xcrun', '--sdk', 'macosx', '--show-sdk-path']),
                    'image_version': os.environ.get('ImageVersion', 'UNKNOWN'),
                    'image_os': os.environ.get('ImageOS', 'UNKNOWN')}
             write_json(output/'environment.json', env)
             if env['Xcode'] != 'Xcode '+tc['xcode_version']+'\nBuild version '+tc['xcode_build'] or env['SDK'] != tc['macos_sdk']:
                 raise RuntimeError('pinned Xcode/SDK unavailable; no automatic fallback')
+            if not Path(env['CPU_SDKROOT']).is_dir():
+                raise RuntimeError('CPU SDKROOT directory unavailable')
             # Upstream fixtures invoke clang++ via PATH; use the same Apple compiler.
             compiler_dir = str(Path(text(['xcrun', '--find', 'clang++'])).parent)
             os.environ['PATH'] = compiler_dir + os.pathsep + os.environ['PATH']
@@ -224,28 +314,35 @@ def main(argv=None):
                                 str(roots['MacKernelSDK']), '--lilu', str(roots['Lilu'])],
                                source, output, 'build.log')
             result['build'] = 'PASS' if rc_build == 0 else 'FAIL'
-            rc_tests = capture([sys.executable, 'tools/test.py'], source, output, 'tests.log')
+            if rc_build == 0:
+                preserve_build_diagnostics(build, output)
             result['tests'] = 'FAIL'
-            tests = build/'tests'
-            if tests.is_dir():
-                (output/'tests').mkdir()
-                for p in sorted(tests.iterdir()):
-                    if p.is_file() and p.suffix in ('.log', '.json'):
-                        shutil.copyfile(p, output/'tests'/p.name)
-            if rc_tests == 0:
-                matrix = json.loads((tests/'results.json').read_text())
-                if len(matrix) != lock['default_cpu_tests'] or any(type(v) is not int or v != 0 for v in matrix.values()):
-                    raise ValueError('upstream default test matrix incomplete')
-                result['tests'] = 'PASS'
+            original_sdkroot = os.environ.get('SDKROOT')
+            os.environ['SDKROOT'] = env['CPU_SDKROOT']
+            try:
+                rc_tests = capture([sys.executable, 'tools/test.py'], source, output, 'tests.log')
+                tests = build/'tests'
+                if tests.is_dir():
+                    (output/'tests').mkdir()
+                    for p in sorted(tests.iterdir()):
+                        if p.is_file() and p.suffix in ('.log', '.json'):
+                            shutil.copyfile(p, output/'tests'/p.name)
+                cpu = qualify_cpu_results(source, output, rc_tests, lock['default_cpu_tests'])
+                result['tests'] = cpu['status']
+                result['qualified_cpu_tests'] = len(cpu['results'])
+            finally:
+                if original_sdkroot is None:
+                    os.environ.pop('SDKROOT', None)
+                else:
+                    os.environ['SDKROOT'] = original_sdkroot
             for name, root in roots.items():
                 if any(not (root/p).is_file() or sha(root/p) != h for p, h in before[name].items()):
                     raise ValueError('dependency/source modified by build or tests')
             result['input_integrity'] = 'PASS'
             if rc_build == 0:
                 result['artifact_validation'] = 'FAIL'
-                result['products'] = inspect_kexts(build)
+                result['products'] = inspect_kexts(build, output)
                 result['artifact_validation'] = 'PASS'
-                shutil.copyfile(build/'build-manifest.json', output/'build-manifest.json')
             if result['build'] == 'PASS' and result['tests'] == 'PASS':
                 package_kexts(build, output)
                 result['status'] = 'PASS'

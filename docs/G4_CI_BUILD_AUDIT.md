@@ -2,6 +2,8 @@
 
 日期：2026-10-12（Asia/Shanghai）。状态：本地配置/依赖资格 PASS；首次 macOS BUILD 与原样上游 CPU runner NOT_TESTED，等待授权。当前没有成功编译的 kext。
 
+2026-10-13更新：首次手动运行38275645396（配置commit87d47a3）整体FAIL；工具链/依赖资格与原生build.py编译链接PASS，但CPU结果54个命名项中1个source-guard PASS、53个因标准头文件发现失败，产物检查FAIL。首次实际二进制未留存，不能事后确认格式或可加载性。已准备本地CI修复，18人工测试PASS；修复尚未推送、未云端验证，也未启动第二次运行。原生BUILD从缺环境阻塞细化为“编译命令PASS / 产物验收未通过”。
+
 本次用户要求的“G4 编译环境”记为 G4-CI。既有规格中的 G4 是 macOS 最小启动，保留原含义、编号和 NOT_TESTED 状态。CI 是解除 G3 构建阻塞的开发设施；G0 恢复 Gate 与内屏验收不因 CI 配置通过而改变。
 
 ## 基线和依赖
@@ -44,11 +46,11 @@ Lilu 必须使用包含 `Contents/Resources/Headers` 和 `Library/plugin_start.c
 2. 自动下载固定的三个归档，完整性与布局验证；保存所有输入文件的 SHA-256 清单。
 3. 原样执行 `python tools/build.py --release --sdk ... --lilu ...`。
 4. 原样执行 `python tools/test.py`，包括 34 C++ 与 22 Python 默认入口。普通编译返回非零时仍继续测试，构建与测试分别记结果；基础设施/超时异常保留失败状态，不伪造未执行步骤。
-5. 核对 56 个默认测试结果、所有返回值为整数 0、输入文件未被修改；检查两个产物的 Info.plist、x86_64、Mach-O KEXT_BUNDLE 和上游 build-manifest hash。
+5. 核对56个语言限定的默认任务结果、所有返回值为整数0、输入文件未被修改。原上游runner将两个C++/Python同名任务合并，结果只有54个stem项且日志共名；修复保留原runner/原结果，并独立复核4个同名入口到不同日志，再与52个无冲突项构成56个资格结果。检查两个产物的Info.plist、lipo x86_64、Mach-O数值字段（magic/cputype/filetype=11）和上游build-manifest hash。
 6. 只有 BUILD、CPU 和产物验证全部通过才生成 `kexts.zip`。失败不发布 kext 包，保留错误/已有测试结果/构建日志。
 7. `always()` 上传独立新建的 `ci-output/`，保留 14 天；仅包含本次云端构建资料，不扫描/上传工作区的 reports/artifacts/第三方 checkout。
 
-保存内容：`build.log`、`tests.log`、逐 fixture log/results、`environment.json`、`dependencies.lock.json`、`input-manifests.json`、上游 `build-manifest.json`（构建及检查完成时）、`result.json`、`artifact-manifest.json`、`SHA256SUMS`、依赖许可证、成功时的 `kexts.zip`。源码 commit、CI commit、run ID、依赖版本和产物 hash 均在这些文件中。kext ZIP附带WhateverXe/MacKernelSDK/Lilu许可证，Lilu原文单独按固定commit/长度/hash获取，不纳入编译输入。取消或 runner 被强制结束时，GitHub 不能保证最后上传完成；检查实际 run 和 artifact 是否存在。
+保存内容：`build.log`、`tests.log`、逐fixture log/results、`cpu-qualified-results.json`、同名入口独立日志、`environment.json`、`dependencies.lock.json`、`input-manifests.json`、上游`build-manifest.json`（编译完成即保存）、`result.json`、`artifact-manifest.json`、`SHA256SUMS`、依赖许可证、成功时的`kexts.zip`。修复另保留`build-diagnostics/`中明确标UNVERIFIED的编译输出及实际otool/lipo检查日志，供失败诊断；不得据此判定已通过CPU/格式/加载验收。源码commit、CI commit、run ID、依赖版本和产物hash均记录。kext ZIP附带WhateverXe/MacKernelSDK/Lilu许可证，Lilu原文按固定commit/长度/hash获取，不纳入编译输入。取消或runner强制结束时不能保证上传完成；检查实际run/artifact是否存在。
 
 无 exact Apple donor 输入，不下载 Apple 专有驱动，不执行 optional replay。默认 runner 中的 forcewake 无 donor 路径只是 source guards。macOS CPU PASS 不等于 donor replay、kernel 加载、NEC 内屏/加速或 FL 通过。产物为研究构建，未签名、未加载、未部署；AppleIntelTGLCompat 也不自动安装。
 
@@ -103,3 +105,13 @@ docs/G4_CI_BUILD_AUDIT.md
 - sanitizer/mmap/stack 失败：保留失败 fixture 与环境信息，区分测试平台问题和源码缺陷；不删断言、关 sanitizer 或把 Windows 适配结果当 macOS PASS。
 
 目前没有实际 Xcode/SDK 错误，不能给出已经生效的修复结论。停止/回退：取消云端 run，保留失败证据，停用新 workflow；本地文件恢复到报告中的修改前备份。没有 NEC 系统回滚步骤，因为本轮没有执行系统变更。
+
+### 首次运行后的修复候选
+
+初始审计时没有macOS实际错误；首次运行补充了实际失败证据，详见[run38275645396](https://github.com/kirisamesusi/nec_xe/actions/runs/38275645396)。固定Xcode16.4/16F6、AppleClang17.0.0、SDK15.5均可用，暂不升级工具链/依赖或更改driver ABI参数。
+
+CPU全部记录失败项均为`cassert`/`string.h`等标准头文件未发现。修复在CPU测试及同名复核期间显式设置由`xcrun --sdk macosx --show-sdk-path`取得的SDKROOT，随后恢复原环境；kext编译环境和冻结上游源码不改。这是待第二次macOS运行验证的修复假设，[Clang Darwin工具链源码](https://github.com/llvm/llvm-project/blob/main/clang/lib/Driver/ToolChains/Darwin.cpp)支持SDKROOT作为默认isysroot。
+
+原检查器要求otool文本`KEXT_BUNDLE`是本项目错误：[Apple otool源码](https://github.com/apple-oss-distributions/cctools/blob/main/otool/ofile_print.c)输出`KEXTBUNDLE`。修复直接检查薄Mach-O头的数值magic/cputype/filetype，保留格式诊断文本；测试覆盖合法格式、ARM/fat/错误类型/截断拒绝，以及文本不能伪造二进制格式。初始实际Mach-O未保留，因此不把修复解释为首轮产物已经验收成功。
+
+同名任务复核保留原fixture、断言、ASan/UBSan参数与source hash，不减少默认任务、不掩盖失败，也不触发optional donor。18本地资格测试通过；编译后diag留存和artifact格式/CPU修复仍需新的单次云端实验。第二次dispatch未授权，本地修复可审阅，原首轮日志与结果保持原样。
